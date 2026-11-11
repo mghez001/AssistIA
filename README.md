@@ -143,3 +143,62 @@ $env:GEMINI_API_KEY = "MA_CLE_GEMINI"     # au lieu de : set GEMINI_API_KEY=MA_C
 - Code sans erreur : `dart analyze` (dans `assistia_repas`) et `flutter analyze` (dans `assistia_app`).
 
 Plus de détails : `assistia_repas/README.md` (serveur, tools, API) et `assistia_app/README.md` (app, Open Food Facts, Android/iOS).
+
+## Structure
+
+```
+assistia_repas/
+├── bin/server.dart            # serveur MCP (tools + ressource) et routage HTTP
+├── lib/meal_repository.dart   # données : repas, garde-manger, lieux, cache produits
+├── lib/product.dart           # fiche produit filtrée (instantané Open Food Facts)
+├── lib/open_food_facts.dart   # client API Open Food Facts
+├── lib/meal_service.dart      # validation + enregistrement d'un repas (MCP et REST)
+├── lib/meal_analysis.dart     # bilan du jour, habitudes, hypothèse, texte des règles
+├── lib/meal_rules.dart        # règles de régularité (check_meal_regularity)
+├── lib/rest_api.dart          # routes /api pour l'app
+└── data/meals.json            # données (anciens fichiers compatibles)
+```
+
+## Tools MCP
+
+| Tool | Rôle |
+|---|---|
+| `get_product(barcode)` | Fiche Open Food Facts filtrée (cache local d'abord) |
+| `get_meals(start_date, end_date)` | Repas avec aliments, quantités, lieu, niveau de confiance |
+| `get_daily_summary(date)` | Bilan calculé : kcal (avec indicateur « fiable »), % NOVA 4, repas sautés |
+| `get_pantry()` | Garde-manger virtuel |
+| `get_eating_habits(days?, until?)` | Heures habituelles, repas les plus fréquents (« comme d'habitude ») |
+| `check_meal_regularity(start_date, end_date)` | Les 4 règles de bien-être |
+| `get_meal_plan(start_date, end_date)` | Menus planifiés |
+| `log_meal(...)` | Enregistrer un repas dit en langage naturel |
+| `delete_meal(id)` | Supprimer un repas enregistré par erreur (après accord de l'utilisateur) |
+| `propose_meal_hypothesis(type, latitude?, longitude?)` | Question à poser en notification (« Déjeuner au RU ? ») |
+
+**Ressource MCP** `rules://alimentation` : créneaux, règles, niveaux de confiance et ton à adopter. Le LLM la lit comme contexte (ce n'est pas une fonction).
+
+Principe : **le serveur calcule, le LLM explique.**
+
+## Lancer
+
+```bash
+dart pub get
+dart run bin/server.dart --http --port 3000 --token UnSecretBienLong123
+cloudflared tunnel --url http://localhost:3000 --http-host-header localhost:3000
+```
+
+- `--off-staging` : utilise l'environnement de test d'Open Food Facts.
+- `--http-host-header localhost:3000` est nécessaire : `mcp_dart` refuse par défaut (403) les requêtes dont l'en-tête Host n'est pas local (protection anti-DNS-rebinding).
+- Le Chat : connecteur MCP personnalisé → `https://….trycloudflare.com/mcp`, authentification par token.
+- App : Réglages → `https://….trycloudflare.com` (sans `/mcp`) + même token.
+
+## API REST (app)
+
+`GET /api/health` · `GET /api/meals?start&end` · `POST /api/meals` · `GET /api/summary?date` · `GET|POST /api/pantry` · `DELETE /api/pantry/<id>` · `GET|POST /api/places` · `GET /api/hypothesis?type&lat&lon` · `GET /api/product/<code>` · `GET /api/rules`
+
+Toutes protégées par `Authorization: Bearer <token>`.
+
+## Chat intégré à l'app (POST /api/chat)
+
+Le serveur joue le rôle d'**hôte MCP** : l'app envoie la conversation, le serveur appelle le LLM, exécute les tools demandés via un client MCP (relié au serveur MCP en mémoire, `lib/in_memory_transport.dart`), puis renvoie la réponse et la liste des tools utilisés (`lib/chat_agent.dart`).
+
+
